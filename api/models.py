@@ -3,7 +3,6 @@ from django.contrib.auth.models import AbstractUser
 
 class User(AbstractUser):
     # AbstractUser ya incluye username, password, email, first_name, last_name, is_active, etc.
-    # Aquí podemos agregar campos extra si lo requerimos en el futuro.
     
     class Meta:
         verbose_name = "Usuario"
