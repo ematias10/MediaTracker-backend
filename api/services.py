@@ -4,7 +4,7 @@ from django.conf import settings
 from rest_framework.exceptions import PermissionDenied, APIException
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import transaction
-from .models import User, Album, Artist, Movie
+from .models import User, Album, Artist, Movie, CustomGroup
 
 def register_user(validated_data: dict) -> Tuple[User, str, str]:
     """
@@ -16,13 +16,18 @@ def register_user(validated_data: dict) -> Tuple[User, str, str]:
     if invitation_code != settings.REGISTRATION_SECRET_KEY:
         raise PermissionDenied("Código de invitación inválido.")
         
-    user = User.objects.create_user(
-        username=validated_data['username'],
-        email=validated_data.get('email', ''),
-        password=validated_data['password'],
-        first_name=validated_data.get('first_name', ''),
-        last_name=validated_data.get('last_name', '')
-    )
+    with transaction.atomic():
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', '')
+        )
+        
+        # Crear grupo personal automático para el usuario
+        personal_group = CustomGroup.objects.create(name=f"Mi Catálogo ({user.username})")
+        personal_group.members.add(user)
     
     # Generar JWT para el nuevo usuario
     refresh = RefreshToken.for_user(user)
@@ -177,3 +182,51 @@ def get_or_create_tmdb_movie(tmdb_id: str) -> Movie:
             release_date=release_date
         )
         return movie
+
+def add_album_to_group(group_id: int, album: Album, user: User) -> 'GroupAlbum':
+    from .models import CustomGroup, GroupAlbum
+    group = CustomGroup.objects.get(id=group_id)
+    group_album, created = GroupAlbum.objects.get_or_create(
+        group=group,
+        album=album,
+        defaults={'added_by': user, 'status': 'pending'}
+    )
+    return group_album
+
+def add_movie_to_group(group_id: int, movie: Movie, user: User) -> 'GroupMovie':
+    from .models import CustomGroup, GroupMovie
+    group = CustomGroup.objects.get(id=group_id)
+    group_movie, created = GroupMovie.objects.get_or_create(
+        group=group,
+        movie=movie,
+        defaults={'added_by': user, 'status': 'pending'}
+    )
+    return group_movie
+
+def mark_group_album_completed(group_album_id: int) -> 'GroupAlbum':
+    from .models import GroupAlbum
+    group_album = GroupAlbum.objects.get(id=group_album_id)
+    group_album.mark_as_completed()
+    return group_album
+
+def mark_group_movie_completed(group_movie_id: int) -> 'GroupMovie':
+    from .models import GroupMovie
+    group_movie = GroupMovie.objects.get(id=group_movie_id)
+    group_movie.mark_as_completed()
+    return group_movie
+
+def create_or_update_review(user: User, rating: int, comment: str, album_id: int = None, movie_id: int = None) -> 'UserReview':
+    from .models import UserReview
+    if album_id:
+        review, created = UserReview.objects.update_or_create(
+            user=user, album_id=album_id,
+            defaults={'rating': rating, 'comment': comment, 'movie': None}
+        )
+    elif movie_id:
+        review, created = UserReview.objects.update_or_create(
+            user=user, movie_id=movie_id,
+            defaults={'rating': rating, 'comment': comment, 'album': None}
+        )
+    else:
+        raise ValueError("Debe proporcionar album_id o movie_id")
+    return review
